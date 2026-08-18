@@ -2,6 +2,15 @@
 session_start();
 include 'db.php';
 
+// Tự động làm sạch dữ liệu rác trong Session giỏ hàng
+if (isset($_SESSION['cart']) && is_array($_SESSION['cart'])) {
+    foreach ($_SESSION['cart'] as $k => $v) {
+        if (!is_array($v)) {
+            unset($_SESSION['cart'][$k]);
+        }
+    }
+}
+
 // --- XỬ LÝ LOGIC GIỎ HÀNG ---
 $action = isset($_GET['action']) ? $_GET['action'] : (isset($_POST['action']) ? $_POST['action'] : '');
 $id = isset($_GET['id']) ? intval($_GET['id']) : (isset($_POST['id']) ? intval($_POST['id']) : 0);
@@ -15,7 +24,7 @@ if ($action == 'add' && $id > 0) {
         $product = mysqli_fetch_assoc($result);
         $price = ($product['gia_khuyen_mai'] > 0) ? $product['gia_khuyen_mai'] : $product['gia'];
         
-        if (!isset($_SESSION['cart'])) {
+        if (!isset($_SESSION['cart']) || !is_array($_SESSION['cart'])) {
             $_SESSION['cart'] = array();
         }
 
@@ -34,7 +43,7 @@ if ($action == 'add' && $id > 0) {
     exit();
 }
 
-// 2. CẬP NHẬT SỐ LƯỢNG GIỎ HÀNG (Sửa lỗi tại đây)
+// 2. Cập nhật số lượng
 if ($action == 'update' && $_SERVER['REQUEST_METHOD'] == 'POST') {
     if (isset($_POST['qty']) && is_array($_POST['qty'])) {
         foreach ($_POST['qty'] as $prod_id => $new_qty) {
@@ -42,10 +51,8 @@ if ($action == 'update' && $_SERVER['REQUEST_METHOD'] == 'POST') {
             $new_qty = intval($new_qty);
             
             if ($new_qty <= 0) {
-                // Nếu số lượng <= 0 thì xóa khỏi giỏ
                 unset($_SESSION['cart'][$prod_id]);
-            } else if (isset($_SESSION['cart'][$prod_id])) {
-                // Cập nhật số lượng mới
+            } else if (isset($_SESSION['cart'][$prod_id]) && is_array($_SESSION['cart'][$prod_id])) {
                 $_SESSION['cart'][$prod_id]['quantity'] = $new_qty;
             }
         }
@@ -99,7 +106,6 @@ if ($action == 'clear') {
         .prod-info img { width: 60px; height: 60px; object-fit: cover; border-radius: 8px; flex-shrink: 0; }
         .prod-name { font-weight: bold; color: #333; line-height: 1.3; }
 
-        /* Ô nhập số lượng */
         .input-qty {
             width: 55px;
             text-align: center;
@@ -173,7 +179,6 @@ if ($action == 'clear') {
 
         <h2 class="header-title"><i class="fa-solid fa-cart-shopping"></i> GIỎ HÀNG CỦA BẠN</h2>
 
-        <!-- FORM CẬP NHẬT GIỎ HÀNG -->
         <form action="cart.php" method="POST">
             <input type="hidden" name="action" value="update">
             
@@ -191,10 +196,12 @@ if ($action == 'clear') {
                     <tbody>
                         <?php 
                         $total = 0;
+                        $has_item = false;
+                        
                         if (isset($_SESSION['cart']) && !empty($_SESSION['cart'])):
                             foreach ($_SESSION['cart'] as $cart_id => $item):
                                 if (!is_array($item)) continue;
-                                
+                                $has_item = true;
                                 $subtotal = $item['price'] * $item['quantity'];
                                 $total += $subtotal;
                         ?>
@@ -207,7 +214,6 @@ if ($action == 'clear') {
                                 </td>
                                 <td><?php echo number_format($item['price']); ?> VNĐ</td>
                                 <td>
-                                    <!-- Nhập số lượng mới vào mảng qty[id] -->
                                     <input type="number" name="qty[<?php echo $cart_id; ?>]" value="<?php echo $item['quantity']; ?>" min="1" class="input-qty">
                                 </td>
                                 <td class="price"><?php echo number_format($subtotal); ?> VNĐ</td>
@@ -219,7 +225,9 @@ if ($action == 'clear') {
                             </tr>
                         <?php 
                             endforeach;
-                        else:
+                        endif;
+
+                        if (!$has_item):
                         ?>
                             <tr>
                                 <td colspan="5" style="padding: 30px; color: #666;">Giỏ hàng của bạn đang trống!</td>
@@ -229,7 +237,7 @@ if ($action == 'clear') {
                 </table>
             </div>
 
-            <?php if (isset($_SESSION['cart']) && !empty($_SESSION['cart'])): ?>
+            <?php if ($has_item): ?>
                 <div class="cart-actions">
                     <a href="cart.php?action=clear" style="color: #e11d48; text-decoration: none; font-size: 13px;">
                         <i class="fa-solid fa-broom"></i> Xóa toàn bộ giỏ hàng
@@ -244,9 +252,11 @@ if ($action == 'clear') {
         <div class="cart-summary">
             <div>Tổng tiền thanh toán:</div>
             <div class="total-price"><?php echo number_format($total); ?> VNĐ</div>
-            <a href="checkout.php" class="btn-checkout">
-                Đến trang thanh toán <i class="fa-solid fa-arrow-right"></i>
-            </a>
+            <?php if ($has_item): ?>
+                <a href="checkout.php" class="btn-checkout">
+                    Đến trang thanh toán <i class="fa-solid fa-arrow-right"></i>
+                </a>
+            <?php endif; ?>
         </div>
     </div>
 
