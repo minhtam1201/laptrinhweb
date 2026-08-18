@@ -2,18 +2,55 @@
 session_start();
 include 'db.php';
 
-// Xử lý xóa sản phẩm khỏi giỏ hàng
-if (isset($_GET['action']) && $_GET['action'] == 'delete' && isset($_GET['id'])) {
-    $id = intval($_GET['id']);
-    unset($_SESSION['cart'][$id]);
-    header('Location: cart.php');
+// --- XỬ LÝ LOGIC GIỎ HÀNG ---
+$action = isset($_GET['action']) ? $_GET['action'] : '';
+$id = isset($_GET['id']) ? intval($_GET['id']) : 0;
+
+// 1. Thêm sản phẩm vào giỏ
+if ($action == 'add' && $id > 0) {
+    $sql = "SELECT * FROM san_pham WHERE id = $id";
+    $result = mysqli_query($conn, $sql);
+    
+    if ($result && mysqli_num_rows($result) > 0) {
+        $product = mysqli_fetch_assoc($result);
+        
+        // Xác định giá bán (Ưu tiên giá khuyến mãi nếu có)
+        $price = ($product['gia_khuyen_mai'] > 0) ? $product['gia_khuyen_mai'] : $product['gia'];
+        
+        if (!isset($_SESSION['cart'])) {
+            $_SESSION['cart'] = array();
+        }
+
+        // Kiểm tra nếu sản phẩm đã có trong giỏ thì tăng số lượng, chưa có thì thêm mảng mới
+        if (isset($_SESSION['cart'][$id]) && is_array($_SESSION['cart'][$id])) {
+            $_SESSION['cart'][$id]['quantity'] += 1;
+        } else {
+            $_SESSION['cart'][$id] = array(
+                'name'     => $product['ten_san_pham'],
+                'price'    => $price,
+                'image'    => $product['hinh_anh'],
+                'quantity' => 1
+            );
+        }
+    }
+    header("Location: cart.php");
     exit();
 }
 
-// Tính tổng số lượng hiển thị trên Header
-$cart_count = 0;
-if (isset($_SESSION['cart']) && !empty($_SESSION['cart'])) {
-    $cart_count = array_sum($_SESSION['cart']);
+// 2. Xóa 1 sản phẩm
+if ($action == 'delete' && $id > 0) {
+    if (isset($_SESSION['cart'][$id])) {
+        unset($_SESSION['cart'][$id]);
+    }
+    header("Location: cart.php");
+    exit();
+}
+
+// 3. Xóa sạch giỏ hàng (Để reset nếu bị lỗi session)
+if ($action == 'clear') {
+    unset($_SESSION['cart']);
+    header("Location: cart.php");
+    exit();
 }
 ?>
 <!DOCTYPE html>
@@ -22,223 +59,127 @@ if (isset($_SESSION['cart']) && !empty($_SESSION['cart'])) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Giỏ Hàng - Gấu Bông Store</title>
-    <!-- External CSS & Font Awesome -->
     <link rel="stylesheet" href="assets/css/style.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-
     <style>
-        body {
-            background-color: #FFF5F7;
-            font-family: 'Montserrat', Arial, sans-serif;
-            margin: 0;
-            padding: 0;
-        }
-        .cart-wrapper {
-            background: #ffffff;
+        body { background: #fff0f5; font-family: sans-serif; margin: 0; padding: 20px 10px; }
+        .cart-container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: #fff;
+            padding: 25px;
             border-radius: 16px;
-            padding: 30px;
-            margin-top: 30px;
-            margin-bottom: 50px;
-            box-shadow: 0 4px 20px rgba(244, 114, 182, 0.15);
-            border: 1px solid #FCE7F3;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.05);
         }
-        .cart-title {
-            font-size: 22px;
-            color: #9333EA;
-            margin-bottom: 25px;
-            border-bottom: 2px solid #F3E8FF;
-            padding-bottom: 12px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-        .cart-table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-bottom: 25px;
-            table-layout: fixed;
-        }
-        .cart-table th {
-            background-color: #F3E8FF;
-            color: #6B21A8;
-            padding: 14px 10px;
-            font-size: 15px;
-            text-align: center;
-            border: 1px solid #E9D5FF;
-        }
-        .cart-table td {
-            padding: 12px 10px;
-            border: 1px solid #FCE7F3;
-            vertical-align: middle;
-            text-align: center;
-            font-size: 14px;
-        }
-        .cart-img-thumb {
-            width: 70px !important;
-            height: 70px !important;
-            object-fit: cover !important;
-            border-radius: 8px;
-            border: 1px solid #FCE7F3;
-            flex-shrink: 0;
-        }
-        .product-cell {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            text-align: left;
-        }
-        .product-title-text {
-            font-weight: 600;
-            color: #374151;
-            line-height: 1.3;
-        }
-        .subtotal-text {
-            color: #EC4899;
-            font-weight: 700;
-        }
-        .btn-delete-item {
-            color: #EF4444;
-            background: #FEE2E2;
+        .header-title { text-align: center; color: #9333EA; font-size: 22px; margin: 15px 0 25px; }
+        
+        /* Bảng hiển thị */
+        .table-responsive { width: 100%; overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; min-width: 600px; }
+        th { background: #f3e8ff; color: #7e22ce; padding: 12px; font-size: 14px; text-align: center; }
+        td { padding: 12px; border-bottom: 1px solid #f3e8ff; text-align: center; vertical-align: middle; font-size: 14px; }
+
+        .prod-info { display: flex; align-items: center; gap: 12px; text-align: left; }
+        .prod-info img { width: 60px; height: 60px; object-fit: cover; border-radius: 8px; flex-shrink: 0; }
+        .prod-name { font-weight: bold; color: #333; line-height: 1.3; }
+
+        .price { color: #d0011b; font-weight: bold; }
+        .btn-delete {
+            background: #ffe4e6;
+            color: #e11d48;
             padding: 6px 12px;
             border-radius: 6px;
             text-decoration: none;
-            font-weight: 600;
             font-size: 13px;
-            display: inline-flex;
-            align-items: center;
-            gap: 4px;
-            transition: all 0.2s;
+            font-weight: bold;
+            display: inline-block;
         }
-        .btn-delete-item:hover {
-            background: #EF4444;
-            color: #ffffff;
-        }
-        .cart-footer {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border-top: 2px solid #F3E8FF;
-            padding-top: 20px;
-            flex-wrap: wrap;
-            gap: 15px;
-        }
-        .total-price-box {
-            font-size: 18px;
-            color: #4B5563;
-        }
-        .total-price-number {
-            color: #EC4899;
-            font-size: 24px;
-            font-weight: 800;
-            margin-left: 8px;
-        }
-        .btn-checkout-action {
-            background: linear-gradient(135deg, #A855F7, #EC4899);
-            color: #ffffff !important;
+        .btn-delete:hover { background: #fecdd3; }
+
+        .cart-summary { margin-top: 25px; text-align: right; }
+        .total-price { font-size: 22px; color: #d0011b; font-weight: bold; margin: 8px 0 15px; }
+        .btn-checkout {
+            display: inline-block;
+            background: linear-gradient(90deg, #a855f7, #ec4899);
+            color: #fff;
             padding: 12px 30px;
             border-radius: 25px;
             text-decoration: none;
-            font-weight: 700;
-            font-size: 15px;
-            box-shadow: 0 4px 12px rgba(236, 72, 153, 0.3);
-            transition: all 0.3s ease;
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
+            font-weight: bold;
         }
-        .btn-checkout-action:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 6px 18px rgba(236, 72, 153, 0.4);
-        }
-        .empty-cart-box {
-            text-align: center;
-            padding: 50px 0;
+
+        @media screen and (max-width: 600px) {
+            .cart-container { padding: 15px; }
+            .cart-summary { text-align: center; }
+            .btn-checkout { display: block; width: 100%; box-sizing: border-box; }
         }
     </style>
 </head>
 <body>
 
-    <!-- Header Top -->
-    <header>
-        <div class="container header-content">
-            <a href="index.php" class="logo">
-                <i class="fa-solid fa-store"></i> Gấu Bông Store
-            </a>
-            
-            <a href="index.php" style="color: #9333EA; text-decoration: none; font-weight: 600; display: flex; align-items: center; gap: 6px;">
-                <i class="fa-solid fa-arrow-left"></i> Tiếp tục mua hàng
-            </a>
-        </div>
-    </header>
+    <div class="cart-container">
+        <a href="products.php" style="color: #9333EA; text-decoration: none; font-weight: bold;">
+            <i class="fa-solid fa-arrow-left"></i> Tiếp tục mua hàng
+        </a>
 
-    <!-- Main Cart Content -->
-    <div class="container">
-        <div class="cart-wrapper">
-            <h2 class="cart-title">
-                <i class="fa-solid fa-cart-shopping"></i> GIỎ HÀNG CỦA BẠN
-            </h2>
+        <h2 class="header-title"><i class="fa-solid fa-cart-shopping"></i> GIỎ HÀNG CỦA BẠN</h2>
 
-            <?php if (!empty($_SESSION['cart'])): ?>
-                <table class="cart-table">
-                    <thead>
+        <div class="table-responsive">
+            <table>
+                <thead>
+                    <tr>
+                        <th style="width: 40%;">Sản phẩm</th>
+                        <th>Giá</th>
+                        <th>Số lượng</th>
+                        <th>Tổng tiền</th>
+                        <th>Hành động</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php 
+                    $total = 0;
+                    if (isset($_SESSION['cart']) && !empty($_SESSION['cart'])):
+                        foreach ($_SESSION['cart'] as $cart_id => $item):
+                            // Kiểm tra kĩ kiểu dữ liệu tránh lỗi lặp lại
+                            if (!is_array($item)) continue;
+                            
+                            $subtotal = $item['price'] * $item['quantity'];
+                            $total += $subtotal;
+                    ?>
                         <tr>
-                            <th style="width: 40%;">Sản phẩm</th>
-                            <th style="width: 15%;">Giá</th>
-                            <th style="width: 12%;">Số lượng</th>
-                            <th style="width: 18%;">Tổng tiền</th>
-                            <th style="width: 15%;">Hành động</th>
+                            <td>
+                                <div class="prod-info">
+                                    <img src="images/<?php echo htmlspecialchars($item['image']); ?>" alt="">
+                                    <span class="prod-name"><?php echo htmlspecialchars($item['name']); ?></span>
+                                </div>
+                            </td>
+                            <td><?php echo number_format($item['price']); ?> VNĐ</td>
+                            <td><?php echo $item['quantity']; ?></td>
+                            <td class="price"><?php echo number_format($subtotal); ?> VNĐ</td>
+                            <td>
+                                <a href="cart.php?action=delete&id=<?php echo $cart_id; ?>" class="btn-delete">
+                                    <i class="fa-solid fa-trash"></i> Xóa
+                                </a>
+                            </td>
                         </tr>
-                    </thead>
-                    <tbody>
-                        <?php 
-                        $total_all = 0;
-                        $ids = implode(',', array_keys($_SESSION['cart']));
-                        $sql = "SELECT * FROM san_pham WHERE id IN ($ids)";
-                        $result = mysqli_query($conn, $sql);
+                    <?php 
+                        endforeach;
+                    else:
+                    ?>
+                        <tr>
+                            <td colspan="5" style="padding: 30px; color: #666;">Giỏ hàng của bạn đang trống!</td>
+                        </tr>
+                    <?php endif; ?>
+                </tbody>
+            </table>
+        </div>
 
-                        while ($row = mysqli_fetch_assoc($result)):
-                            $qty = $_SESSION['cart'][$row['id']];
-                            $subtotal = $row['gia'] * $qty;
-                            $total_all += $subtotal;
-                        ?>
-                            <tr>
-                                <td>
-                                    <div class="product-cell">
-                                        <img src="images/<?php echo htmlspecialchars($row['hinh_anh']); ?>" class="cart-img-thumb" alt="product">
-                                        <span class="product-title-text"><?php echo htmlspecialchars($row['ten_san_pham']); ?></span>
-                                    </div>
-                                </td>
-                                <td><?php echo number_format($row['gia']); ?> VNĐ</td>
-                                <td><strong><?php echo $qty; ?></strong></td>
-                                <td class="subtotal-text"><?php echo number_format($subtotal); ?> VNĐ</td>
-                                <td>
-                                    <a href="cart.php?action=delete&id=<?php echo $row['id']; ?>" class="btn-delete-item" onclick="return confirm('Bạn có chắc chắn muốn xóa sản phẩm này?')">
-                                        <i class="fa-solid fa-trash-can"></i> Xóa
-                                    </a>
-                                </td>
-                            </tr>
-                        <?php endwhile; ?>
-                    </tbody>
-                </table>
-
-                <div class="cart-footer">
-                    <div class="total-price-box">
-                        Tổng tiền thanh toán: <span class="total-price-number"><?php echo number_format($total_all); ?> VNĐ</span>
-                    </div>
-                    <a href="checkout.php" class="btn-checkout-action">
-                        Đến trang thanh toán <i class="fa-solid fa-arrow-right"></i>
-                    </a>
-                </div>
-
-            <?php else: ?>
-                <div class="empty-cart-box">
-                    <i class="fa-solid fa-cart-flatbed-empty" style="font-size: 60px; color: #CBD5E1; margin-bottom: 15px;"></i>
-                    <p style="font-size: 16px; color: #64748B; margin-bottom: 20px;">Giỏ hàng của bạn đang trống!</p>
-                    <a href="index.php" class="btn-checkout-action">
-                        <i class="fa-solid fa-bag-shopping"></i> Mua sắm ngay
-                    </a>
-                </div>
-            <?php endif; ?>
+        <div class="cart-summary">
+            <div>Tổng tiền thanh toán:</div>
+            <div class="total-price"><?php echo number_format($total); ?> VNĐ</div>
+            <a href="checkout.php" class="btn-checkout">
+                Đến trang thanh toán <i class="fa-solid fa-arrow-right"></i>
+            </a>
         </div>
     </div>
 
