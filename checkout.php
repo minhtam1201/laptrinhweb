@@ -2,25 +2,62 @@
 session_start();
 include 'db.php';
 
-// Nếu giỏ hàng trống thì chuyển về giỏ hàng
-if (empty($_SESSION['cart'])) {
-    header('Location: cart.php');
+// Nếu giỏ hàng trống thì chuyển về trang giỏ hàng
+if (!isset($_SESSION['cart']) || empty($_SESSION['cart'])) {
+    header("Location: cart.php");
     exit();
 }
 
-$success_msg = '';
+$error = '';
+$success = '';
 
-// Xử lý khi nhấn nút Đặt hàng
-if ($_SERVER['REQUEST_METHOD'] == 'POST') {
+// Xử lý khi nhấn nút Xác nhận đặt hàng
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['btn_order'])) {
     $ho_ten = trim($_POST['ho_ten']);
     $so_dien_thoai = trim($_POST['so_dien_thoai']);
     $dia_chi = trim($_POST['dia_chi']);
     $ghi_chu = trim($_POST['ghi_chu']);
 
-    if (!empty($ho_ten) && !empty($so_dien_thoai) && !empty($dia_chi)) {
-        // Xóa giỏ hàng sau khi đặt thành công
-        unset($_SESSION['cart']);
-        $success_msg = "Đặt hàng thành công! Cảm ơn bạn đã ủng hộ Gấu Bông Store.";
+    if (empty($ho_ten) || empty($so_dien_thoai) || empty($dia_chi)) {
+        $error = "Vui lòng nhập đầy đủ các thông tin bắt buộc (*)!";
+    } else {
+        // 1. Tính tổng tiền đơn hàng
+        $tong_tien = 0;
+        foreach ($_SESSION['cart'] as $item) {
+            if (is_array($item)) {
+                $gia = intval($item['price']);
+                $so_luong = intval($item['quantity']);
+                $tong_tien += $gia * $so_luong;
+            }
+        }
+
+        // 2. Lưu đơn hàng vào database
+        $sql_order = "INSERT INTO don_hang (ho_ten, so_dien_thoai, dia_chi, ghi_chu, tong_tien, ngay_dat) 
+                      VALUES ('$ho_ten', '$so_dien_thoai', '$dia_chi', '$ghi_chu', '$tong_tien', NOW())";
+        
+        if (mysqli_query($conn, $sql_order)) {
+            $don_hang_id = mysqli_insert_id($conn);
+
+            // 3. Lưu chi tiết từng sản phẩm
+            foreach ($_SESSION['cart'] as $san_pham_id => $item) {
+                if (is_array($item)) {
+                    $ten_sp = mysqli_real_escape_string($conn, $item['name']);
+                    $gia = intval($item['price']);
+                    $so_luong = intval($item['quantity']);
+                    
+                    $sql_detail = "INSERT INTO chi_tiet_don_hang (don_hang_id, san_pham_id, ten_san_pham, gia, so_luong) 
+                                   VALUES ('$don_hang_id', '$san_pham_id', '$ten_sp', '$gia', '$so_luong')";
+                    mysqli_query($conn, $sql_detail);
+                }
+            }
+
+            // 4. Xóa giỏ hàng sau khi đặt thành công
+            unset($_SESSION['cart']);
+            echo "<script>alert('Đặt hàng thành công!'); window.location.href='products.php';</script>";
+            exit();
+        } else {
+            $error = "Có lỗi xảy ra khi tạo đơn hàng. Vui lòng thử lại!";
+        }
     }
 }
 ?>
@@ -28,240 +65,149 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 <html lang="vi">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Thanh Toán - Gấu Bông Store</title>
     <link rel="stylesheet" href="assets/css/style.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    
     <style>
-        body {
-            background-color: #FFF5F7;
-            font-family: 'Montserrat', Arial, sans-serif;
-            margin: 0;
-            padding: 0;
-        }
-        .checkout-wrapper {
-            background: #ffffff;
+        body { background: #fdf2f8; font-family: sans-serif; margin: 0; padding: 20px 10px; }
+        
+        .top-bar { max-width: 1000px; margin: 0 auto 15px; display: flex; justify-content: space-between; align-items: center; }
+        .top-bar a { color: #9333EA; text-decoration: none; font-weight: bold; font-size: 14px; }
+        
+        .checkout-container {
+            max-width: 1000px;
+            margin: 0 auto;
+            background: #fff;
             border-radius: 16px;
-            padding: 30px;
-            margin-top: 30px;
-            margin-bottom: 50px;
-            box-shadow: 0 4px 20px rgba(244, 114, 182, 0.15);
-            border: 1px solid #FCE7F3;
-        }
-        .checkout-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
+            padding: 25px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+            display: flex;
             gap: 30px;
         }
-        .section-heading {
-            font-size: 20px;
-            color: #9333EA;
-            margin-bottom: 20px;
-            border-bottom: 2px solid #F3E8FF;
-            padding-bottom: 10px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-        .form-group {
-            margin-bottom: 18px;
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-        }
-        .form-group label {
-            font-weight: 600;
-            color: #4A5568;
-            font-size: 14px;
-        }
-        .form-group label span {
-            color: #EC4899;
-        }
+
+        .checkout-form { flex: 1.2; }
+        .order-summary { flex: 0.8; background: #faf5ff; padding: 20px; border-radius: 12px; border: 1px solid #f3e8ff; height: fit-content; }
+
+        .section-title { font-size: 16px; font-weight: bold; color: #7e22ce; margin-bottom: 15px; display: flex; align-items: center; gap: 8px; }
+        
+        .form-group { margin-bottom: 15px; }
+        .form-group label { display: block; font-size: 13px; font-weight: bold; margin-bottom: 6px; color: #333; }
+        .form-group label span { color: #e11d48; }
         .form-control {
             width: 100%;
-            padding: 12px 15px;
-            border: 1px solid #E9D5FF;
+            padding: 10px 12px;
+            border: 1px solid #e5e7eb;
             border-radius: 8px;
             font-size: 14px;
-            outline: none;
-            transition: all 0.2s;
             box-sizing: border-box;
+            outline: none;
         }
-        .form-control:focus {
-            border-color: #A855F7;
-            box-shadow: 0 0 0 3px rgba(168, 85, 247, 0.2);
-        }
-        textarea.form-control {
-            resize: vertical;
-            min-height: 90px;
-        }
-        .btn-submit-order {
-            background: linear-gradient(135deg, #A855F7, #EC4899);
-            color: #ffffff;
-            border: none;
-            padding: 14px 20px;
-            border-radius: 25px;
-            font-weight: 700;
-            font-size: 16px;
-            cursor: pointer;
+        .form-control:focus { border-color: #a855f7; }
+        textarea.form-control { resize: vertical; height: 80px; }
+
+        .order-item { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px dashed #e9d5ff; }
+        .order-item-name { font-weight: bold; font-size: 13px; color: #333; }
+        .order-item-qty { font-size: 12px; color: #666; }
+        .order-item-price { font-weight: bold; color: #d0011b; font-size: 13px; }
+
+        .total-row { display: flex; justify-content: space-between; align-items: center; margin-top: 15px; font-weight: bold; font-size: 16px; }
+        .total-price { color: #d0011b; font-size: 20px; }
+
+        .btn-order {
             width: 100%;
-            margin-top: 10px;
-            box-shadow: 0 4px 12px rgba(236, 72, 153, 0.3);
-            transition: all 0.3s ease;
+            background: linear-gradient(90deg, #a855f7, #ec4899);
+            color: #fff;
+            border: none;
+            padding: 12px 0;
+            border-radius: 25px;
+            font-weight: bold;
+            font-size: 15px;
+            cursor: pointer;
+            margin-top: 15px;
         }
-        .btn-submit-order:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 6px 18px rgba(236, 72, 153, 0.4);
-        }
-        .summary-card {
-            background: #FAF5FF;
-            border: 1px solid #F3E8FF;
-            border-radius: 12px;
-            padding: 20px;
-        }
-        .summary-item {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 10px 0;
-            border-bottom: 1px dashed #E9D5FF;
-            font-size: 14px;
-        }
-        .summary-total {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding-top: 15px;
-            font-size: 18px;
-            font-weight: 700;
-            color: #374151;
-        }
-        .summary-total .price {
-            color: #EC4899;
-            font-size: 22px;
-        }
-        .alert-success {
-            background: #DEF7EC;
-            color: #03543F;
-            padding: 20px;
-            border-radius: 12px;
-            text-align: center;
-            font-weight: 600;
-            font-size: 16px;
-            margin-bottom: 20px;
-        }
-        @media (max-width: 768px) {
-            .checkout-grid {
-                grid-template-columns: 1fr;
-            }
+        .alert-error { background: #ffe4e6; color: #e11d48; padding: 10px; border-radius: 8px; font-size: 13px; margin-bottom: 15px; }
+
+        /* Mobile Responsive */
+        @media screen and (max-width: 768px) {
+            .checkout-container { flex-direction: column-reverse; padding: 15px; gap: 20px; }
         }
     </style>
 </head>
 <body>
 
-    <!-- Header -->
-    <header>
-        <div class="container header-content">
-            <a href="index.php" class="logo">
-                <i class="fa-solid fa-store"></i> Gấu Bông Store
-            </a>
-            <a href="cart.php" style="color: #9333EA; text-decoration: none; font-weight: 600;">
-                <i class="fa-solid fa-arrow-left"></i> Quay lại giỏ hàng
-            </a>
-        </div>
-    </header>
+    <div class="top-bar">
+        <a href="products.php" style="font-size: 18px;"><i class="fa-solid fa-store"></i> Gấu Bông Store</a>
+        <a href="cart.php"><i class="fa-solid fa-arrow-left"></i> Quay lại giỏ hàng</a>
+    </div>
 
-    <div class="container">
-        <div class="checkout-wrapper">
+    <div class="checkout-container">
+        <!-- Cột nhập thông tin -->
+        <div class="checkout-form">
+            <div class="section-title"><i class="fa-solid fa-truck"></i> THÔNG TIN GIAO HÀNG</div>
             
-            <?php if (!empty($success_msg)): ?>
-                <div class="alert-success">
-                    <i class="fa-solid fa-circle-check" style="font-size: 30px; display: block; margin-bottom: 10px;"></i>
-                    <?php echo $success_msg; ?>
-                    <div style="margin-top: 20px;">
-                        <a href="index.php" class="btn-submit-order" style="display: inline-block; width: auto; text-decoration: none; padding: 10px 25px;">Trở về trang chủ</a>
-                    </div>
-                </div>
-            <?php else: ?>
-
-                <div class="checkout-grid">
-                    <!-- Form Điền Thông Tin -->
-                    <div>
-                        <h2 class="section-heading">
-                            <i class="fa-solid fa-truck"></i> THÔNG TIN GIAO HÀNG
-                        </h2>
-
-                        <form action="checkout.php" method="POST">
-                            <div class="form-group">
-                                <label for="ho_ten">Họ và tên <span>(*)</span></label>
-                                <input type="text" id="ho_ten" name="ho_ten" class="form-control" placeholder="Nhập họ và tên..." required>
-                            </div>
-
-                            <div class="form-group">
-                                <label for="so_dien_thoai">Số điện thoại <span>(*)</span></label>
-                                <input type="tel" id="so_dien_thoai" name="so_dien_thoai" class="form-control" placeholder="Nhập số điện thoại..." required>
-                            </div>
-
-                            <div class="form-group">
-                                <label for="dia_chi">Địa chỉ nhận hàng <span>(*)</span></label>
-                                <textarea id="dia_chi" name="dia_chi" class="form-control" placeholder="Nhập địa chỉ chi tiết (Số nhà, đường, phường/xa, quận/huyện...)" required></textarea>
-                            </div>
-
-                            <div class="form-group">
-                                <label for="ghi_chu">Ghi chú đơn hàng</label>
-                                <textarea id="ghi_chu" name="ghi_chu" class="form-control" placeholder="Nhập ghi chú thêm (nếu có)..."></textarea>
-                            </div>
-
-                            <button type="submit" class="btn-submit-order">
-                                <i class="fa-solid fa-check"></i> XÁC NHẬN ĐẶT HÀNG
-                            </button>
-                        </form>
-                    </div>
-
-                    <!-- Đơn hàng tóm tắt -->
-                    <div>
-                        <h2 class="section-heading">
-                            <i class="fa-solid fa-receipt"></i> ĐƠN HÀNG CỦA BẠN
-                        </h2>
-
-                        <div class="summary-card">
-                            <?php 
-                            $total_all = 0;
-                            if (!empty($_SESSION['cart'])) {
-                                $ids = implode(',', array_keys($_SESSION['cart']));
-                                $sql = "SELECT * FROM san_pham WHERE id IN ($ids)";
-                                $result = mysqli_query($conn, $sql);
-
-                                while ($row = mysqli_fetch_assoc($result)):
-                                    $qty = $_SESSION['cart'][$row['id']];
-                                    $subtotal = $row['gia'] * $qty;
-                                    $total_all += $subtotal;
-                            ?>
-                                    <div class="summary-item">
-                                        <div>
-                                            <strong><?php echo htmlspecialchars($row['ten_san_pham']); ?></strong>
-                                            <div style="color: #6B7280; font-size: 13px;">x <?php echo $qty; ?></div>
-                                        </div>
-                                        <div style="font-weight: 600; color: #374151;">
-                                            <?php echo number_format($subtotal); ?> VNĐ
-                                        </div>
-                                    </div>
-                            <?php 
-                                endwhile; 
-                            }
-                            ?>
-
-                            <div class="summary-total">
-                                <span>Tổng cộng:</span>
-                                <span class="price"><?php echo number_format($total_all); ?> VNĐ</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
+            <?php if (!empty($error)): ?>
+                <div class="alert-error"><?php echo $error; ?></div>
             <?php endif; ?>
 
+            <form action="checkout.php" method="POST">
+                <div class="form-group">
+                    <label>Họ và tên <span>(*)</span></label>
+                    <input type="text" name="ho_ten" class="form-control" placeholder="Nhập họ và tên..." required>
+                </div>
+
+                <div class="form-group">
+                    <label>Số điện thoại <span>(*)</span></label>
+                    <input type="tel" name="so_dien_thoai" class="form-control" placeholder="Nhập số điện thoại..." required>
+                </div>
+
+                <div class="form-group">
+                    <label>Địa chỉ nhận hàng <span>(*)</span></label>
+                    <textarea name="dia_chi" class="form-control" placeholder="Nhập địa chỉ chi tiết (Số nhà, đường, phường/xã, quận/huyện...)" required></textarea>
+                </div>
+
+                <div class="form-group">
+                    <label>Ghi chú đơn hàng</label>
+                    <textarea name="ghi_chu" class="form-control" placeholder="Nhập ghi chú thêm (nếu có)..."></textarea>
+                </div>
+
+                <button type="submit" name="btn_order" class="btn-order">
+                    <i class="fa-solid fa-check"></i> XÁC NHẬN ĐẶT HÀNG
+                </button>
+            </form>
+        </div>
+
+        <!-- Cột tóm tắt đơn hàng -->
+        <div class="order-summary">
+            <div class="section-title"><i class="fa-solid fa-receipt"></i> ĐƠN HÀNG CỦA BẠN</div>
+            
+            <?php 
+            $tong_tien = 0;
+            if (isset($_SESSION['cart']) && !empty($_SESSION['cart'])):
+                foreach ($_SESSION['cart'] as $item):
+                    if (!is_array($item)) continue; // Bỏ qua nếu dữ liệu không chuẩn
+                    
+                    $gia = intval($item['price']);
+                    $so_luong = intval($item['quantity']);
+                    $thanh_tien = $gia * $so_luong;
+                    $tong_tien += $thanh_tien;
+            ?>
+                <div class="order-item">
+                    <div>
+                        <div class="order-item-name"><?php echo htmlspecialchars($item['name']); ?></div>
+                        <div class="order-item-qty">x <?php echo $so_luong; ?></div>
+                    </div>
+                    <div class="order-item-price"><?php echo number_format($thanh_tien); ?> VNĐ</div>
+                </div>
+            <?php 
+                endforeach;
+            endif; 
+            ?>
+
+            <div class="total-row">
+                <span>Tổng tiền:</span>
+                <span class="total-price"><?php echo number_format($tong_tien); ?> VNĐ</span>
+            </div>
         </div>
     </div>
 
